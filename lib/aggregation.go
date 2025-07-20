@@ -1,7 +1,20 @@
 package lib
 
+import "strings"
+
 type aggregator interface {
 	on(collection []map[string]any) any
+}
+
+func chooseAggregator(op string) aggregator {
+	var operator aggregator
+	if strings.HasPrefix(op, "first(") {
+		operator = first{name: strings.Replace(strings.Replace(op, "first(", "", -1), ")", "", -1)}
+
+	} else if strings.HasPrefix(op, "first_not_null(") {
+		operator = firstNotNull{name: strings.Replace(strings.Replace(op, "first_not_null(", "", -1), ")", "", -1)}
+	}
+	return operator
 }
 
 type first struct {

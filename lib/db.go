@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"strings"
 
 	badger "github.com/dgraph-io/badger/v4"
 )
@@ -107,20 +106,18 @@ func WithValue(name, kind string) Opt {
 }
 
 type IterWrapper struct {
-	partialKeys []key
-	aggs        []agg
 	*dbWrapper
-}
-
-type agg struct {
-	name string
-	aggregator
+	*merger
 }
 
 // NewIterator initializes a new iterWrapper
 func (db *dbWrapper) NewIterator() *IterWrapper {
 	return &IterWrapper{
 		dbWrapper: db,
+		merger: &merger{
+			masks:     db.masks,
+			allValues: db.values,
+		},
 	}
 }
 
@@ -142,14 +139,7 @@ func (itW *IterWrapper) WithPartialKey(name string) *IterWrapper {
 // op: The aggregation operation to perform
 // Returns the iterWrapper for method chaining
 func (itW *IterWrapper) WithAgg(name, op string) *IterWrapper {
-	var operator aggregator
-	if strings.HasPrefix(op, "first(") {
-		operator = first{name: strings.Replace(strings.Replace(op, "first(", "", -1), ")", "", -1)}
-
-	} else if strings.HasPrefix(op, "first_not_null(") {
-		operator = firstNotNull{name: strings.Replace(strings.Replace(op, "first_not_null(", "", -1), ")", "", -1)}
-	}
-	itW.aggs = append(itW.aggs, agg{name: name, aggregator: operator})
+	itW.aggs = append(itW.aggs, namedAggregation{name: name, aggregator: chooseAggregator(op)})
 	return itW
 }
 
@@ -184,7 +174,7 @@ func (itW *IterWrapper) Iter(fn func(res map[string]any) error) error {
 				valueMaps = valueMaps[:0]
 			}
 
-			if len(itW.values) == 0 {
+			if len(itW.allValues) == 0 {
 				continue
 			}
 
@@ -204,44 +194,6 @@ func (itW *IterWrapper) Iter(fn func(res map[string]any) error) error {
 
 		return nil
 	})
-}
-
-func (itW *IterWrapper) restoreKey(keyBytes []byte) ([]byte, map[string]any) {
-	keyMap := make(map[string]any, len(itW.keys))
-	keyOffset := 0
-	for _, k := range itW.partialKeys {
-		var keyData any
-		keyData, kStep := k.decode(keyBytes[keyOffset:])
-		keyOffset += kStep
-		keyMap[k.name] = keyData
-	}
-
-	currKeyBytes := keyBytes[:keyOffset]
-	return currKeyBytes, keyMap
-}
-
-func (itW *IterWrapper) restoreValue(valueBytes []byte) map[string]any {
-	valueHead := valueBytes[:itW.masks]
-	valueBody := valueBytes[itW.masks:]
-	valueMap := make(map[string]any, len(itW.values))
-	offset := 0
-	for i, f := range itW.values {
-		if (valueHead[i/8] & (1 << (7 - (i % 8)))) != 0 {
-			continue
-		}
-		var valueData any
-		valueData, step := f.decode(valueBody[offset:])
-		valueMap[f.name] = valueData
-		offset += step
-	}
-	return valueMap
-}
-
-func (itW *IterWrapper) merge(keyValue map[string]any, valueValues []map[string]any) map[string]any {
-	for _, agg := range itW.aggs {
-		keyValue[agg.name] = agg.on(valueValues)
-	}
-	return keyValue
 }
 
 // Destroy cleans up the database by removing all temporary files.
