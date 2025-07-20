@@ -215,15 +215,21 @@ type TxnWrapper struct {
 	dbW *dbWrapper
 }
 
-// Add executes a transaction function that can add multiple records.
-// The transaction is automatically committed when the function completes.
-// Returns any error encountered during the transaction.
-func (db *dbWrapper) Add(fn func(*TxnWrapper) error) error {
+// Recv continuously receives records from the provided channel and writes them to the database.
+// It creates a new write transaction and processes records until the channel is closed.
+// Each record is added to the transaction using TxnWrapper.Add().
+// The transaction is automatically committed when the channel closes (via defer).
+func (db *dbWrapper) Recv(ch chan map[string]any) error {
 	txn := db.db.NewTransaction(true)
 	w := &TxnWrapper{txn: txn, dbW: db}
 	defer w.Commit()
 
-	return fn(w)
+	for record := range ch {
+		if err := w.Add(record); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Commit finalizes the current transaction.

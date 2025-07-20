@@ -37,25 +37,12 @@ func main() {
 
 	defer dbW.Destroy()
 
-	dbW.Add(func(txn *lib.TxnWrapper) error {
-		scanner := bufio.NewScanner(os.Stdin)
-		var i int32
-		for scanner.Scan() {
-			var record map[string]any
-			if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-				return fmt.Errorf("fail to parse as JSON: %v", err)
-			}
-			record["_i_"] = i
-			if err := txn.Add(record); err != nil {
-				return err
-			}
-			i += 1
-		}
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("error in scanner: %v", err)
-		}
-		return nil
-	})
+	ch := make(chan map[string]any, 100)
+	go readStdin(ch)
+	if err := dbW.Recv(ch); err != nil {
+		fmt.Fprintf(os.Stderr, "fail to Recv: %v\n", err)
+		return
+	}
 
 	itW := dbW.NewIterator()
 	for i := 1; i < len(os.Args); i++ {
@@ -83,4 +70,21 @@ func main() {
 		fmt.Println(string(b))
 		return nil
 	})
+}
+
+func readStdin(ch chan map[string]any) {
+	defer close(ch)
+
+	var i int32
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var record map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			fmt.Fprintf(os.Stderr, "fail to parse as JSON: %v\n", err)
+			return
+		}
+		record["_i_"] = i
+		ch <- record
+		i += 1
+	}
 }
