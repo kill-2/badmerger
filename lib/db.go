@@ -171,17 +171,7 @@ func (itW *IterWrapper) Iter(fn func(res map[string]any) error) error {
 		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
 
-			kPayload := item.Key()
-			keyMap := make(map[string]any, len(itW.keys))
-			keyOffset := 0
-			for _, k := range itW.partialKeys {
-				var keyData any
-				keyData, kStep := k.decode(kPayload[keyOffset:])
-				keyOffset += kStep
-				keyMap[k.name] = keyData
-			}
-
-			currKeyBytes := kPayload[:keyOffset]
+			currKeyBytes, keyMap := itW.restoreKey(item.Key())
 			if !bytes.Equal(lastKeyBytes, currKeyBytes) {
 				if len(lastKeyBytes) > 0 {
 					if err := fn(itW.merge(lastKeyMap, valueMaps)); err != nil {
@@ -199,20 +189,7 @@ func (itW *IterWrapper) Iter(fn func(res map[string]any) error) error {
 			}
 
 			err := item.Value(func(valueBytes []byte) error {
-				valueHead := valueBytes[:itW.masks]
-				valueBody := valueBytes[itW.masks:]
-				valueMap := make(map[string]any, len(itW.values))
-				offset := 0
-				for i, f := range itW.values {
-					if (valueHead[i/8] & (1 << (7 - (i % 8)))) != 0 {
-						continue
-					}
-					var valueData any
-					valueData, step := f.decode(valueBody[offset:])
-					valueMap[f.name] = valueData
-					offset += step
-				}
-				valueMaps = append(valueMaps, valueMap)
+				valueMaps = append(valueMaps, itW.restoreValue(valueBytes))
 				return nil
 			})
 
@@ -227,6 +204,37 @@ func (itW *IterWrapper) Iter(fn func(res map[string]any) error) error {
 
 		return nil
 	})
+}
+
+func (itW *IterWrapper) restoreKey(keyBytes []byte) ([]byte, map[string]any) {
+	keyMap := make(map[string]any, len(itW.keys))
+	keyOffset := 0
+	for _, k := range itW.partialKeys {
+		var keyData any
+		keyData, kStep := k.decode(keyBytes[keyOffset:])
+		keyOffset += kStep
+		keyMap[k.name] = keyData
+	}
+
+	currKeyBytes := keyBytes[:keyOffset]
+	return currKeyBytes, keyMap
+}
+
+func (itW *IterWrapper) restoreValue(valueBytes []byte) map[string]any {
+	valueHead := valueBytes[:itW.masks]
+	valueBody := valueBytes[itW.masks:]
+	valueMap := make(map[string]any, len(itW.values))
+	offset := 0
+	for i, f := range itW.values {
+		if (valueHead[i/8] & (1 << (7 - (i % 8)))) != 0 {
+			continue
+		}
+		var valueData any
+		valueData, step := f.decode(valueBody[offset:])
+		valueMap[f.name] = valueData
+		offset += step
+	}
+	return valueMap
 }
 
 func (itW *IterWrapper) merge(keyValue map[string]any, valueValues []map[string]any) map[string]any {
