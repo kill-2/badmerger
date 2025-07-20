@@ -225,7 +225,8 @@ func (db *dbWrapper) Recv(ch chan map[string]any) error {
 	defer w.Commit()
 
 	for record := range ch {
-		if err := w.Add(record); err != nil {
+		keys, values := db.extractKeysAndValues(record)
+		if err := w.Add(keys, values); err != nil {
 			return err
 		}
 	}
@@ -242,9 +243,19 @@ func (txn *TxnWrapper) Commit() {
 // The record is a map of field names to values.
 // Returns an error if the record cannot be added.
 // Automatically handles transaction size limits by committing and starting a new transaction if needed.
-func (txn *TxnWrapper) Add(record map[string]any) error {
+func (txn *TxnWrapper) Add(keyPayload, valuePayload []byte) error {
+	if err := txn.txn.Set(keyPayload, valuePayload); err == badger.ErrTxnTooBig {
+		_ = txn.txn.Commit()
+		txn.txn = txn.dbW.db.NewTransaction(true)
+		_ = txn.txn.Set(keyPayload, valuePayload)
+	}
+
+	return nil
+}
+
+func (dbW *dbWrapper) extractKeysAndValues(record map[string]any) ([]byte, []byte) {
 	keyPayload := make([]byte, 0)
-	for _, f := range txn.dbW.keys {
+	for _, f := range dbW.keys {
 		fieldValue := record[f.name]
 		fieldValueBin := f.encode(fieldValue)
 		keyPayload = append(keyPayload, fieldValueBin...)
@@ -252,9 +263,9 @@ func (txn *TxnWrapper) Add(record map[string]any) error {
 	}
 
 	var valuePayload []byte
-	if len(txn.dbW.values) > 0 {
-		valuePayload = make([]byte, txn.dbW.masks)
-		for i, f := range txn.dbW.values {
+	if len(dbW.values) > 0 {
+		valuePayload = make([]byte, dbW.masks)
+		for i, f := range dbW.values {
 			fieldValue, ok := record[f.name]
 			if !ok || (fieldValue == nil) {
 				valuePayload[i/8] |= (1 << (7 - (i % 8)))
@@ -265,11 +276,5 @@ func (txn *TxnWrapper) Add(record map[string]any) error {
 		}
 	}
 
-	if err := txn.txn.Set(keyPayload, valuePayload); err == badger.ErrTxnTooBig {
-		_ = txn.txn.Commit()
-		txn.txn = txn.dbW.db.NewTransaction(true)
-		_ = txn.txn.Set(keyPayload, valuePayload)
-	}
-
-	return nil
+	return keyPayload, valuePayload
 }
