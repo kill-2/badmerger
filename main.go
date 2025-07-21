@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	_ "github.com/kill-2/badmerger/badgerdb"
 	"github.com/kill-2/badmerger/lib"
 )
 
@@ -29,7 +30,7 @@ func main() {
 	}
 	opts = append(opts, lib.WithKey("_i_", "int32"))
 
-	dbW, err := lib.New(os.Getenv("BADMERGER_TMP"), opts...)
+	dbW, err := lib.New("badger", os.Getenv("BADMERGER_TMP"), opts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fail to open db %v", err)
 		return

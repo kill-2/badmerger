@@ -5,9 +5,11 @@ import (
 	"os"
 )
 
+var Registration = make(map[string]func(string, ...Opt) (Storage, error))
+
 type dbWrapper struct {
 	loc    string
-	db     storage
+	db     Storage
 	keys   []key
 	values []value
 	masks  int
@@ -29,13 +31,13 @@ type field struct {
 	decode decoder
 }
 
-type storage interface {
-	NewInserter() inserter
-	Iterate(*merger, func(res map[string]any) error) error
+type Storage interface {
+	NewInserter() Inserter
+	Iterate(*Merger, func(res map[string]any) error) error
 	Location() string
 }
 
-type inserter interface {
+type Inserter interface {
 	Insert(keyPayload, valuePayload []byte) error
 	Commit() error
 }
@@ -43,8 +45,13 @@ type inserter interface {
 // New creates a new dbWrapper instance with optional configuration.
 // It initializes a temporary BadgerDB database (in memory if dir is '?') and applies any provided options.
 // Returns the dbWrapper instance or an error if initialization fails.
-func New(dir string, opts ...Opt) (*dbWrapper, error) {
-	db, err := NewBadger(dir, opts...)
+func New(storageName string, dir string, opts ...Opt) (*dbWrapper, error) {
+	st, ok := Registration[storageName]
+	if !ok {
+		return nil, fmt.Errorf("no such storage: %v", storageName)
+	}
+
+	db, err := st(dir, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("fail to open db %v", err)
 	}
@@ -101,14 +108,14 @@ func WithValue(name, kind string) Opt {
 
 type IterWrapper struct {
 	*dbWrapper
-	*merger
+	*Merger
 }
 
 // NewIterator initializes a new iterWrapper
 func (db *dbWrapper) NewIterator() *IterWrapper {
 	return &IterWrapper{
 		dbWrapper: db,
-		merger: &merger{
+		Merger: &Merger{
 			masks:     db.masks,
 			allValues: db.values,
 		},
@@ -142,7 +149,7 @@ func (itW *IterWrapper) WithAgg(name, op string) *IterWrapper {
 // fn: Callback function that receives each aggregated result map
 // Returns error if any iteration or aggregation operation fails
 func (itW *IterWrapper) Iter(fn func(res map[string]any) error) error {
-	return itW.db.Iterate(itW.merger, fn)
+	return itW.db.Iterate(itW.Merger, fn)
 }
 
 // Destroy cleans up the database by removing all temporary files.

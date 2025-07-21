@@ -1,4 +1,4 @@
-package lib
+package badgerdb
 
 import (
 	"bytes"
@@ -6,13 +6,18 @@ import (
 	"os"
 
 	badger "github.com/dgraph-io/badger/v4"
+	"github.com/kill-2/badmerger/lib"
 )
+
+func init() {
+	lib.Registration["badger"] = NewBadger
+}
 
 type badgerDb struct {
 	*badger.DB
 }
 
-func NewBadger(dir string, opts ...Opt) (*badgerDb, error) {
+func NewBadger(dir string, opts ...lib.Opt) (lib.Storage, error) {
 	var badgerOpts badger.Options
 	if dir == "?" {
 		badgerOpts = badger.DefaultOptions("").WithInMemory(true)
@@ -36,7 +41,7 @@ func (bg *badgerDb) Location() string {
 	return bg.DB.Opts().Dir
 }
 
-func (bg *badgerDb) NewInserter() inserter {
+func (bg *badgerDb) NewInserter() lib.Inserter {
 	return &badgerDbTxn{
 		db:  bg,
 		txn: bg.DB.NewTransaction(true),
@@ -62,7 +67,7 @@ func (bgt *badgerDbTxn) Commit() error {
 	return bgt.txn.Commit()
 }
 
-func (db *badgerDb) Iterate(m *merger, fn func(res map[string]any) error) error {
+func (db *badgerDb) Iterate(m *lib.Merger, fn func(res map[string]any) error) error {
 	return db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 10
@@ -76,10 +81,10 @@ func (db *badgerDb) Iterate(m *merger, fn func(res map[string]any) error) error 
 		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
 
-			currKeyBytes, keyMap := m.restoreKey(item.Key())
+			currKeyBytes, keyMap := m.RestoreKey(item.Key())
 			if !bytes.Equal(lastKeyBytes, currKeyBytes) {
 				if len(lastKeyBytes) > 0 {
-					if err := fn(m.merge(lastKeyMap, valueMaps)); err != nil {
+					if err := fn(m.Merge(lastKeyMap, valueMaps)); err != nil {
 						return err
 					}
 				}
@@ -89,12 +94,12 @@ func (db *badgerDb) Iterate(m *merger, fn func(res map[string]any) error) error 
 				valueMaps = valueMaps[:0]
 			}
 
-			if len(m.allValues) == 0 {
+			if m.NoValue() {
 				continue
 			}
 
 			err := item.Value(func(valueBytes []byte) error {
-				valueMaps = append(valueMaps, m.restoreValue(valueBytes))
+				valueMaps = append(valueMaps, m.RestoreValue(valueBytes))
 				return nil
 			})
 
@@ -103,7 +108,7 @@ func (db *badgerDb) Iterate(m *merger, fn func(res map[string]any) error) error 
 			}
 		}
 
-		if err := fn(m.merge(lastKeyMap, valueMaps)); err != nil {
+		if err := fn(m.Merge(lastKeyMap, valueMaps)); err != nil {
 			return err
 		}
 
