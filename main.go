@@ -7,30 +7,14 @@ import (
 	"os"
 	"strings"
 
-	_ "github.com/kill-2/badmerger/badgerdb"
 	"github.com/kill-2/badmerger/lib"
+
+	_ "github.com/kill-2/badmerger/badgerdb"
+	_ "github.com/kill-2/badmerger/lotus"
 )
 
 func main() {
-	var opts []lib.Opt
-	for i := 1; i < len(os.Args); i++ {
-		if os.Args[i] == "-k" && i+1 < len(os.Args) {
-			parts := strings.Split(os.Args[i+1], ":")
-			if len(parts) == 2 {
-				opts = append(opts, lib.WithKey(parts[0], parts[1]))
-			}
-			i++
-		} else if os.Args[i] == "-v" && i+1 < len(os.Args) {
-			parts := strings.Split(os.Args[i+1], ":")
-			if len(parts) == 2 {
-				opts = append(opts, lib.WithValue(parts[0], parts[1]))
-			}
-			i++
-		}
-	}
-	opts = append(opts, lib.WithKey("_i_", "int32"))
-
-	dbW, err := lib.New("badger", os.Getenv("BADMERGER_TMP"), opts...)
+	dbW, err := lib.New(storageOpt(), os.Getenv("BADMERGER_TMP"), schemaOpts()...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fail to open db %v", err)
 		return
@@ -88,4 +72,34 @@ func readStdin(ch chan map[string]any) {
 		ch <- record
 		i += 1
 	}
+}
+
+func schemaOpts() []lib.Opt {
+	var opts []lib.Opt
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] == "-k" && i+1 < len(os.Args) {
+			parts := strings.Split(os.Args[i+1], ":")
+			if len(parts) == 2 {
+				opts = append(opts, lib.WithKey(parts[0], parts[1]))
+			}
+			i++
+		} else if os.Args[i] == "-v" && i+1 < len(os.Args) {
+			parts := strings.Split(os.Args[i+1], ":")
+			if len(parts) == 2 {
+				opts = append(opts, lib.WithValue(parts[0], parts[1]))
+			}
+			i++
+		}
+	}
+	opts = append(opts, lib.WithKey("_i_", "int32"))
+
+	return opts
+}
+
+func storageOpt() string {
+	s := os.Getenv("BADMERGER_STORAGE")
+	if s == "" {
+		s = "badger"
+	}
+	return s
 }
