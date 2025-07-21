@@ -9,8 +9,8 @@ import (
 
 	"github.com/kill-2/badmerger/lib"
 
-	_ "github.com/kill-2/badmerger/badgerdb"
-	_ "github.com/kill-2/badmerger/lotus"
+	_ "github.com/kill-2/badmerger/storage/badgerdb"
+	_ "github.com/kill-2/badmerger/storage/lotus"
 )
 
 func main() {
