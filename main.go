@@ -8,28 +8,13 @@ import (
 	"strings"
 
 	"github.com/kill-2/badmerger/lib"
+
+	_ "github.com/kill-2/badmerger/badgerdb"
+	_ "github.com/kill-2/badmerger/lotus"
 )
 
 func main() {
-	var opts []lib.Opt
-	for i := 1; i < len(os.Args); i++ {
-		if os.Args[i] == "-k" && i+1 < len(os.Args) {
-			parts := strings.Split(os.Args[i+1], ":")
-			if len(parts) == 2 {
-				opts = append(opts, lib.WithKey(parts[0], parts[1]))
-			}
-			i++
-		} else if os.Args[i] == "-v" && i+1 < len(os.Args) {
-			parts := strings.Split(os.Args[i+1], ":")
-			if len(parts) == 2 {
-				opts = append(opts, lib.WithValue(parts[0], parts[1]))
-			}
-			i++
-		}
-	}
-	opts = append(opts, lib.WithKey("_i_", "int32"))
-
-	dbW, err := lib.New(os.Getenv("BADMERGER_TMP"), opts...)
+	dbW, err := lib.New(storageOpt(), os.Getenv("BADMERGER_TMP"), schemaOpts()...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fail to open db %v", err)
 		return
@@ -37,25 +22,12 @@ func main() {
 
 	defer dbW.Destroy()
 
-	dbW.Add(func(txn *lib.TxnWrapper) error {
-		scanner := bufio.NewScanner(os.Stdin)
-		var i int32
-		for scanner.Scan() {
-			var record map[string]any
-			if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-				return fmt.Errorf("fail to parse as JSON: %v", err)
-			}
-			record["_i_"] = i
-			if err := txn.Add(record); err != nil {
-				return err
-			}
-			i += 1
-		}
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("error in scanner: %v", err)
-		}
-		return nil
-	})
+	ch := make(chan map[string]any, 100)
+	go readStdin(ch)
+	if err := dbW.Recv(ch); err != nil {
+		fmt.Fprintf(os.Stderr, "fail to Recv: %v\n", err)
+		return
+	}
 
 	itW := dbW.NewIterator()
 	for i := 1; i < len(os.Args); i++ {
@@ -83,4 +55,51 @@ func main() {
 		fmt.Println(string(b))
 		return nil
 	})
+}
+
+func readStdin(ch chan map[string]any) {
+	defer close(ch)
+
+	var i int32
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var record map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			fmt.Fprintf(os.Stderr, "fail to parse as JSON: %v\n", err)
+			return
+		}
+		record["_i_"] = i
+		ch <- record
+		i += 1
+	}
+}
+
+func schemaOpts() []lib.Opt {
+	var opts []lib.Opt
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] == "-k" && i+1 < len(os.Args) {
+			parts := strings.Split(os.Args[i+1], ":")
+			if len(parts) == 2 {
+				opts = append(opts, lib.WithKey(parts[0], parts[1]))
+			}
+			i++
+		} else if os.Args[i] == "-v" && i+1 < len(os.Args) {
+			parts := strings.Split(os.Args[i+1], ":")
+			if len(parts) == 2 {
+				opts = append(opts, lib.WithValue(parts[0], parts[1]))
+			}
+			i++
+		}
+	}
+	opts = append(opts, lib.WithKey("_i_", "int32"))
+
+	return opts
+}
+
+func storageOpt() string {
+	s := os.Getenv("BADMERGER_STORAGE")
+	if s == "" {
+		s = "badger"
+	}
+	return s
 }

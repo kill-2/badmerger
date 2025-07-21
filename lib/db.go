@@ -1,17 +1,15 @@
 package lib
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"strings"
-
-	badger "github.com/dgraph-io/badger/v4"
 )
+
+var Registration = make(map[string]func(string, ...Opt) (Storage, error))
 
 type dbWrapper struct {
 	loc    string
-	db     *badger.DB
+	db     Storage
 	keys   []key
 	values []value
 	masks  int
@@ -33,31 +31,33 @@ type field struct {
 	decode decoder
 }
 
+type Storage interface {
+	NewInserter() Inserter
+	Iterate(*Merger, func(res map[string]any) error) error
+	Location() string
+}
+
+type Inserter interface {
+	Insert(keyPayload, valuePayload []byte) error
+	Commit() error
+}
+
 // New creates a new dbWrapper instance with optional configuration.
 // It initializes a temporary BadgerDB database (in memory if dir is '?') and applies any provided options.
 // Returns the dbWrapper instance or an error if initialization fails.
-func New(dir string, opts ...Opt) (*dbWrapper, error) {
-	var (
-		badgerOpts badger.Options
-	)
-	if dir == "?" {
-		badgerOpts = badger.DefaultOptions("").WithInMemory(true)
-	} else {
-		tmpDir, err := os.MkdirTemp(dir, "badmerger-")
-		if err != nil {
-			return nil, fmt.Errorf("fail to create db %v", err)
-		}
-		badgerOpts = badger.DefaultOptions(tmpDir)
+func New(storageName string, dir string, opts ...Opt) (*dbWrapper, error) {
+	st, ok := Registration[storageName]
+	if !ok {
+		return nil, fmt.Errorf("no such storage: %v", storageName)
 	}
 
-	badgerOpts.Logger = nil
-	db, err := badger.Open(badgerOpts)
+	db, err := st(dir, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("fail to open db %v", err)
 	}
 
 	w := &dbWrapper{
-		loc: badgerOpts.Dir,
+		loc: db.Location(),
 		db:  db,
 	}
 
@@ -107,20 +107,18 @@ func WithValue(name, kind string) Opt {
 }
 
 type IterWrapper struct {
-	partialKeys []key
-	aggs        []agg
 	*dbWrapper
-}
-
-type agg struct {
-	name string
-	aggregator
+	*Merger
 }
 
 // NewIterator initializes a new iterWrapper
 func (db *dbWrapper) NewIterator() *IterWrapper {
 	return &IterWrapper{
 		dbWrapper: db,
+		Merger: &Merger{
+			masks:     db.masks,
+			allValues: db.values,
+		},
 	}
 }
 
@@ -142,14 +140,7 @@ func (itW *IterWrapper) WithPartialKey(name string) *IterWrapper {
 // op: The aggregation operation to perform
 // Returns the iterWrapper for method chaining
 func (itW *IterWrapper) WithAgg(name, op string) *IterWrapper {
-	var operator aggregator
-	if strings.HasPrefix(op, "first(") {
-		operator = first{name: strings.Replace(strings.Replace(op, "first(", "", -1), ")", "", -1)}
-
-	} else if strings.HasPrefix(op, "first_not_null(") {
-		operator = firstNotNull{name: strings.Replace(strings.Replace(op, "first_not_null(", "", -1), ")", "", -1)}
-	}
-	itW.aggs = append(itW.aggs, agg{name: name, aggregator: operator})
+	itW.aggs = append(itW.aggs, namedAggregation{name: name, aggregator: chooseAggregator(op)})
 	return itW
 }
 
@@ -158,82 +149,7 @@ func (itW *IterWrapper) WithAgg(name, op string) *IterWrapper {
 // fn: Callback function that receives each aggregated result map
 // Returns error if any iteration or aggregation operation fails
 func (itW *IterWrapper) Iter(fn func(res map[string]any) error) error {
-	return itW.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 10
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		var lastKeyMap map[string]any
-		lastKeyBytes := []byte{}
-		valueMaps := []map[string]any{}
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-
-			kPayload := item.Key()
-			keyMap := make(map[string]any, len(itW.keys))
-			keyOffset := 0
-			for _, k := range itW.partialKeys {
-				var keyData any
-				keyData, kStep := k.decode(kPayload[keyOffset:])
-				keyOffset += kStep
-				keyMap[k.name] = keyData
-			}
-
-			currKeyBytes := kPayload[:keyOffset]
-			if !bytes.Equal(lastKeyBytes, currKeyBytes) {
-				if len(lastKeyBytes) > 0 {
-					if err := fn(itW.merge(lastKeyMap, valueMaps)); err != nil {
-						return err
-					}
-				}
-				lastKeyBytes = lastKeyBytes[:0]
-				lastKeyBytes = append(lastKeyBytes, currKeyBytes...)
-				lastKeyMap = keyMap
-				valueMaps = valueMaps[:0]
-			}
-
-			if len(itW.values) == 0 {
-				continue
-			}
-
-			err := item.Value(func(valueBytes []byte) error {
-				valueHead := valueBytes[:itW.masks]
-				valueBody := valueBytes[itW.masks:]
-				valueMap := make(map[string]any, len(itW.values))
-				offset := 0
-				for i, f := range itW.values {
-					if (valueHead[i/8] & (1 << (7 - (i % 8)))) != 0 {
-						continue
-					}
-					var valueData any
-					valueData, step := f.decode(valueBody[offset:])
-					valueMap[f.name] = valueData
-					offset += step
-				}
-				valueMaps = append(valueMaps, valueMap)
-				return nil
-			})
-
-			if err != nil {
-				return err
-			}
-		}
-
-		if err := fn(itW.merge(lastKeyMap, valueMaps)); err != nil {
-			return err
-		}
-
-		return nil
-	})
-}
-
-func (itW *IterWrapper) merge(keyValue map[string]any, valueValues []map[string]any) map[string]any {
-	for _, agg := range itW.aggs {
-		keyValue[agg.name] = agg.on(valueValues)
-	}
-	return keyValue
+	return itW.db.Iterate(itW.Merger, fn)
 }
 
 // Destroy cleans up the database by removing all temporary files.
@@ -250,35 +166,26 @@ func (db *dbWrapper) Destroy() error {
 	return nil
 }
 
-type TxnWrapper struct {
-	txn *badger.Txn
-	dbW *dbWrapper
+// Recv continuously receives records from the provided channel and writes them to the database.
+// It creates a new write transaction and processes records until the channel is closed.
+// Each record is added to the transaction using TxnWrapper.Add().
+// The transaction is automatically committed when the channel closes (via defer).
+func (db *dbWrapper) Recv(ch chan map[string]any) error {
+	ins := db.db.NewInserter()
+	defer ins.Commit()
+
+	for record := range ch {
+		keys, values := db.extractKeysAndValues(record)
+		if err := ins.Insert(keys, values); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// Add executes a transaction function that can add multiple records.
-// The transaction is automatically committed when the function completes.
-// Returns any error encountered during the transaction.
-func (db *dbWrapper) Add(fn func(*TxnWrapper) error) error {
-	txn := db.db.NewTransaction(true)
-	w := &TxnWrapper{txn: txn, dbW: db}
-	defer w.Commit()
-
-	return fn(w)
-}
-
-// Commit finalizes the current transaction.
-// This is called automatically by dbWrapper.Add but can be used manually if needed.
-func (txn *TxnWrapper) Commit() {
-	txn.txn.Commit()
-}
-
-// Add inserts a new record into the database within the current transaction.
-// The record is a map of field names to values.
-// Returns an error if the record cannot be added.
-// Automatically handles transaction size limits by committing and starting a new transaction if needed.
-func (txn *TxnWrapper) Add(record map[string]any) error {
+func (dbW *dbWrapper) extractKeysAndValues(record map[string]any) ([]byte, []byte) {
 	keyPayload := make([]byte, 0)
-	for _, f := range txn.dbW.keys {
+	for _, f := range dbW.keys {
 		fieldValue := record[f.name]
 		fieldValueBin := f.encode(fieldValue)
 		keyPayload = append(keyPayload, fieldValueBin...)
@@ -286,9 +193,9 @@ func (txn *TxnWrapper) Add(record map[string]any) error {
 	}
 
 	var valuePayload []byte
-	if len(txn.dbW.values) > 0 {
-		valuePayload = make([]byte, txn.dbW.masks)
-		for i, f := range txn.dbW.values {
+	if len(dbW.values) > 0 {
+		valuePayload = make([]byte, dbW.masks)
+		for i, f := range dbW.values {
 			fieldValue, ok := record[f.name]
 			if !ok || (fieldValue == nil) {
 				valuePayload[i/8] |= (1 << (7 - (i % 8)))
@@ -299,11 +206,5 @@ func (txn *TxnWrapper) Add(record map[string]any) error {
 		}
 	}
 
-	if err := txn.txn.Set(keyPayload, valuePayload); err == badger.ErrTxnTooBig {
-		_ = txn.txn.Commit()
-		txn.txn = txn.dbW.db.NewTransaction(true)
-		_ = txn.txn.Set(keyPayload, valuePayload)
-	}
-
-	return nil
+	return keyPayload, valuePayload
 }
