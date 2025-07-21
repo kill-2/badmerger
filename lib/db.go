@@ -30,18 +30,14 @@ type field struct {
 }
 
 type storage interface {
-	NewTransaction() transaction
-	NewIterator() iterator
+	NewInserter() inserter
+	Iterate(*merger, func(res map[string]any) error) error
 	Location() string
 }
 
-type transaction interface {
-	Add(keyPayload, valuePayload []byte) error
+type inserter interface {
+	Insert(keyPayload, valuePayload []byte) error
 	Commit() error
-}
-
-type iterator interface {
-	Iter(*merger, func(res map[string]any) error) error
 }
 
 // New creates a new dbWrapper instance with optional configuration.
@@ -146,7 +142,7 @@ func (itW *IterWrapper) WithAgg(name, op string) *IterWrapper {
 // fn: Callback function that receives each aggregated result map
 // Returns error if any iteration or aggregation operation fails
 func (itW *IterWrapper) Iter(fn func(res map[string]any) error) error {
-	return itW.db.NewIterator().Iter(itW.merger, fn)
+	return itW.db.Iterate(itW.merger, fn)
 }
 
 // Destroy cleans up the database by removing all temporary files.
@@ -168,12 +164,12 @@ func (db *dbWrapper) Destroy() error {
 // Each record is added to the transaction using TxnWrapper.Add().
 // The transaction is automatically committed when the channel closes (via defer).
 func (db *dbWrapper) Recv(ch chan map[string]any) error {
-	txn := db.db.NewTransaction()
-	defer txn.Commit()
+	ins := db.db.NewInserter()
+	defer ins.Commit()
 
 	for record := range ch {
 		keys, values := db.extractKeysAndValues(record)
-		if err := txn.Add(keys, values); err != nil {
+		if err := ins.Insert(keys, values); err != nil {
 			return err
 		}
 	}

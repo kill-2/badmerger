@@ -36,7 +36,7 @@ func (bg *badgerDb) Location() string {
 	return bg.DB.Opts().Dir
 }
 
-func (bg *badgerDb) NewTransaction() transaction {
+func (bg *badgerDb) NewInserter() inserter {
 	return &badgerDbTxn{
 		db:  bg,
 		txn: bg.DB.NewTransaction(true),
@@ -48,7 +48,7 @@ type badgerDbTxn struct {
 	txn *badger.Txn
 }
 
-func (bgt *badgerDbTxn) Add(keyPayload, valuePayload []byte) error {
+func (bgt *badgerDbTxn) Insert(keyPayload, valuePayload []byte) error {
 	if err := bgt.txn.Set(keyPayload, valuePayload); err == badger.ErrTxnTooBig {
 		_ = bgt.Commit()
 		bgt.txn = bgt.db.DB.NewTransaction(true)
@@ -62,18 +62,8 @@ func (bgt *badgerDbTxn) Commit() error {
 	return bgt.txn.Commit()
 }
 
-func (bg *badgerDb) NewIterator() iterator {
-	return &badgerDbIt{
-		db: bg,
-	}
-}
-
-type badgerDbIt struct {
-	db *badgerDb
-}
-
-func (it *badgerDbIt) Iter(m *merger, fn func(res map[string]any) error) error {
-	return it.db.View(func(txn *badger.Txn) error {
+func (db *badgerDb) Iterate(m *merger, fn func(res map[string]any) error) error {
+	return db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 10
 		it := txn.NewIterator(opts)
