@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -20,6 +21,8 @@ func chooseAggregator(op string) aggregator {
 		operator = count{name: strings.ReplaceAll(strings.ReplaceAll(op, "count(", ""), ")", "")}
 	} else if strings.HasPrefix(op, "count_distinct(") {
 		operator = countDistinct{name: strings.ReplaceAll(strings.ReplaceAll(op, "count_distinct(", ""), ")", "")}
+	} else if strings.HasPrefix(op, "tally(") {
+		operator = tally{name: strings.ReplaceAll(strings.ReplaceAll(op, "tally(", ""), ")", "")}
 	} else if strings.HasPrefix(op, "min(") {
 		operator = min{name: strings.ReplaceAll(strings.ReplaceAll(op, "min(", ""), ")", "")}
 	} else if strings.HasPrefix(op, "max(") {
@@ -203,4 +206,23 @@ func (a countDistinct) on(collection []map[string]any) any {
 		}
 	}
 	return int64(len(seen))
+}
+
+type tally struct {
+	name string
+}
+
+func (a tally) on(collection []map[string]any) any {
+	seen := make(map[string]int64)
+	for _, item := range collection {
+		if val, ok := item[a.name]; ok && val != nil {
+			valStr := fmt.Sprintf("%v", val)
+			times, saw := seen[valStr]
+			if !saw {
+				times = 0
+			}
+			seen[valStr] = (times + 1)
+		}
+	}
+	return seen
 }
