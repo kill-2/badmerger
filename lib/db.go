@@ -1,13 +1,16 @@
 package lib
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 var Registration = make(map[string]func(string, ...Opt) (Storage, error))
 
 type dbWrapper struct {
+	store  string
 	loc    string
 	db     Storage
 	keys   []key
@@ -27,6 +30,7 @@ type value struct {
 
 type field struct {
 	name   string
+	kind   string
 	encode encoder
 	decode decoder
 }
@@ -34,7 +38,6 @@ type field struct {
 type Storage interface {
 	NewInserter() Inserter
 	Iterate(*Merger, func(res map[string]any) error) error
-	Location() string
 }
 
 type Inserter interface {
@@ -51,13 +54,18 @@ func New(storageName string, dir string, opts ...Opt) (*dbWrapper, error) {
 		return nil, fmt.Errorf("no such storage: %v", storageName)
 	}
 
-	db, err := st(dir, opts...)
+	tmpDir, err := os.MkdirTemp(dir, "badmerger-")
+	if err != nil {
+		return nil, fmt.Errorf("fail to create db %v", err)
+	}
+
+	db, err := st(tmpDir, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("fail to open db %v", err)
 	}
 
 	w := &dbWrapper{
-		loc: db.Location(),
+		loc: tmpDir,
 		db:  db,
 	}
 
@@ -68,6 +76,10 @@ func New(storageName string, dir string, opts ...Opt) (*dbWrapper, error) {
 	}
 
 	w.masks = (len(w.values) / 8) + 1
+
+	if err := w.lockSchema(); err != nil {
+		return nil, fmt.Errorf("fail to lock schema: %v", err)
+	}
 
 	return w, nil
 }
@@ -84,7 +96,7 @@ func WithKey(name, kind string) Opt {
 		if err != nil {
 			return err
 		}
-		w.keys = append(w.keys, key{field: field{name: name, encode: toBytes, decode: fromBytes}})
+		w.keys = append(w.keys, key{field: field{name: name, kind: kind, encode: toBytes, decode: fromBytes}})
 		return nil
 	}
 }
@@ -101,9 +113,52 @@ func WithValue(name, kind string) Opt {
 		if err != nil {
 			return err
 		}
-		w.values = append(w.values, value{field: field{name: name, encode: toBytes, decode: fromBytes}})
+		w.values = append(w.values, value{field: field{name: name, kind: kind, encode: toBytes, decode: fromBytes}})
 		return nil
 	}
+}
+
+type fixedSchema struct {
+	Store  string             `json:"store"`
+	Keys   []fixedSchemaField `json:"keys"`
+	Values []fixedSchemaField `json:"values"`
+}
+
+type fixedSchemaField struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+func (db *dbWrapper) lockSchema() error {
+	schema := fixedSchema{
+		Store:  db.store,
+		Keys:   make([]fixedSchemaField, len(db.keys)),
+		Values: make([]fixedSchemaField, len(db.values)),
+	}
+
+	for i, k := range db.keys {
+		schema.Keys[i].Name = k.name
+		schema.Keys[i].Kind = k.kind
+	}
+
+	for i, v := range db.values {
+		schema.Values[i].Name = v.name
+		schema.Values[i].Kind = v.kind
+	}
+
+	jsonData, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("failed to marshal schema: %w", err)
+	}
+
+	filePath := filepath.Join(db.loc, "schema.json")
+	fmt.Println(filePath)
+	err = os.WriteFile(filePath, jsonData, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write schema file: %w", err)
+	}
+
+	return nil
 }
 
 type IterWrapper struct {

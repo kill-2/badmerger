@@ -3,7 +3,6 @@ package badgerdb
 import (
 	"bytes"
 	"fmt"
-	"os"
 
 	badger "github.com/dgraph-io/badger/v4"
 	"github.com/kill-2/badmerger/lib"
@@ -18,27 +17,12 @@ type badgerDb struct {
 }
 
 func NewBadger(dir string, opts ...lib.Opt) (lib.Storage, error) {
-	var badgerOpts badger.Options
-	if dir == "?" {
-		badgerOpts = badger.DefaultOptions("").WithInMemory(true)
-	} else {
-		tmpDir, err := os.MkdirTemp(dir, "badmerger-")
-		if err != nil {
-			return nil, fmt.Errorf("fail to create db %v", err)
-		}
-		badgerOpts = badger.DefaultOptions(tmpDir)
-	}
-
-	badgerOpts.Logger = nil
+	badgerOpts := badger.DefaultOptions(dir).WithLogger(nil)
 	db, err := badger.Open(badgerOpts)
 	if err != nil {
 		return nil, fmt.Errorf("fail to open db %v", err)
 	}
 	return &badgerDb{DB: db}, nil
-}
-
-func (bg *badgerDb) Location() string {
-	return bg.DB.Opts().Dir
 }
 
 func (bg *badgerDb) NewInserter() lib.Inserter {

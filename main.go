@@ -20,7 +20,7 @@ func main() {
 		return
 	}
 
-	defer dbW.Destroy()
+	// defer dbW.Destroy()
 
 	ch := make(chan map[string]any, 100)
 	go readStdin(ch)

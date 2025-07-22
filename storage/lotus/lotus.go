@@ -2,9 +2,7 @@ package lotus
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
-	"os"
 
 	"github.com/kill-2/badmerger/lib"
 	"github.com/lotusdblabs/lotusdb/v2"
@@ -15,32 +13,19 @@ func init() {
 }
 
 type lotusDb struct {
-	tmpDir string
 	*lotusdb.DB
 }
 
 func NewLotus(dir string, opts ...lib.Opt) (lib.Storage, error) {
-	var lotusOpts lotusdb.Options
-	if dir == "?" {
-		return nil, errors.New("lotusdb do not support storage in memory")
-	}
 
-	tmpDir, err := os.MkdirTemp(dir, "badmerger-lotus-")
-	if err != nil {
-		return nil, fmt.Errorf("fail to create db %v", err)
-	}
-	lotusOpts = lotusdb.DefaultOptions
-	lotusOpts.DirPath = tmpDir
+	lotusOpts := lotusdb.DefaultOptions
+	lotusOpts.DirPath = dir
 
 	db, err := lotusdb.Open(lotusOpts)
 	if err != nil {
 		return nil, fmt.Errorf("fail to open db %v", err)
 	}
 	return &lotusDb{DB: db}, nil
-}
-
-func (ld *lotusDb) Location() string {
-	return ld.tmpDir
 }
 
 func (ld *lotusDb) NewInserter() lib.Inserter {
