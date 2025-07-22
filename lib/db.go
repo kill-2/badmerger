@@ -1,14 +1,17 @@
 package lib
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
-var Registration = make(map[string]func(string, ...Opt) (Storage, error))
+var Registration = make(map[string]func(string) (Storage, error))
 
 type dbWrapper struct {
-	loc    string
+	store  string
+	dir    string
 	db     Storage
 	keys   []key
 	values []value
@@ -27,6 +30,7 @@ type value struct {
 
 type field struct {
 	name   string
+	kind   string
 	encode encoder
 	decode decoder
 }
@@ -34,7 +38,7 @@ type field struct {
 type Storage interface {
 	NewInserter() Inserter
 	Iterate(*Merger, func(res map[string]any) error) error
-	Location() string
+	Close() error
 }
 
 type Inserter interface {
@@ -42,34 +46,111 @@ type Inserter interface {
 	Commit() error
 }
 
-// New creates a new dbWrapper instance with optional configuration.
-// It initializes a temporary BadgerDB database (in memory if dir is '?') and applies any provided options.
-// Returns the dbWrapper instance or an error if initialization fails.
-func New(storageName string, dir string, opts ...Opt) (*dbWrapper, error) {
-	st, ok := Registration[storageName]
-	if !ok {
-		return nil, fmt.Errorf("no such storage: %v", storageName)
-	}
+func schemaFile(dir string) string {
+	return filepath.Join(dir, "schema.json")
+}
 
-	db, err := st(dir, opts...)
+func recoverSchema(dir string) ([]Opt, error) {
+	data, err := os.ReadFile(schemaFile(dir))
 	if err != nil {
-		return nil, fmt.Errorf("fail to open db %v", err)
+		return nil, fmt.Errorf("failed to read schema file: %w", err)
 	}
 
-	w := &dbWrapper{
-		loc: db.Location(),
-		db:  db,
+	var schema fixedSchema
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal schema: %w", err)
 	}
 
+	opts := []Opt{WithStorage(schema.Store), WithDir(dir)}
+	for _, key := range schema.Keys {
+		opts = append(opts, WithKey(key.Name, key.Kind))
+	}
+	for _, val := range schema.Values {
+		opts = append(opts, WithValue(val.Name, val.Kind))
+	}
+
+	return opts, nil
+}
+
+// Open creates a new database wrapper instance with the provided options.
+// It handles both new database creation and schema recovery from existing databases.
+// When dir option is provided and contains a schema.json file, it will recover
+// the schema configuration automatically.
+func Open(opts ...Opt) (*dbWrapper, error) {
+	w := &dbWrapper{}
 	for _, opt := range opts {
 		if err := opt(w); err != nil {
 			return nil, fmt.Errorf("fail to handle option: %v", err)
 		}
 	}
 
+	if w.dir != "" {
+		if _, err := os.Stat(schemaFile(w.dir)); !os.IsNotExist(err) {
+			recoveredOpts, err := recoverSchema(w.dir)
+			if err != nil {
+				return nil, fmt.Errorf("fail to recover options from %v: %v", w.dir, err)
+			}
+			opts = recoveredOpts
+		}
+	}
+
+	return open(opts...)
+}
+
+func open(opts ...Opt) (*dbWrapper, error) {
+	w := &dbWrapper{}
+	for _, opt := range opts {
+		if err := opt(w); err != nil {
+			return nil, fmt.Errorf("fail to handle option: %v", err)
+		}
+	}
+
+	if w.dir == "" {
+		tmpDir, err := os.MkdirTemp("", "badmerger-")
+		if err != nil {
+			return nil, fmt.Errorf("fail to create db %v", err)
+		}
+		w.dir = tmpDir
+	}
+
+	storageBuilder, ok := Registration[w.store]
+	if !ok {
+		return nil, fmt.Errorf("no such storage: %v", w.store)
+	}
+
+	db, err := storageBuilder(w.dir)
+	if err != nil {
+		return nil, fmt.Errorf("fail to open db %v", err)
+	}
+
+	w.db = db
+
 	w.masks = (len(w.values) / 8) + 1
 
+	if err := w.lockSchema(); err != nil {
+		return nil, fmt.Errorf("fail to lock schema: %v", err)
+	}
+
 	return w, nil
+}
+
+// WithStorage returns a configuration function that sets the storage name in dbWrapper.
+// The storage name must match a registered storage implementation in the Registration map.
+// This is typically used when creating a new database instance via New().
+func WithStorage(name string) Opt {
+	return func(w *dbWrapper) error {
+		w.store = name
+		return nil
+	}
+}
+
+// WithDir returns a configuration function that sets the location in dbWrapper.
+// This is typically used when creating a new database instance via New().
+func WithDir(dir string) Opt {
+	return func(w *dbWrapper) error {
+		w.dir = dir
+		return nil
+	}
 }
 
 // WithKey returns a configuration function that adds a key field to the dbWrapper.
@@ -84,7 +165,7 @@ func WithKey(name, kind string) Opt {
 		if err != nil {
 			return err
 		}
-		w.keys = append(w.keys, key{field: field{name: name, encode: toBytes, decode: fromBytes}})
+		w.keys = append(w.keys, key{field: field{name: name, kind: kind, encode: toBytes, decode: fromBytes}})
 		return nil
 	}
 }
@@ -101,9 +182,51 @@ func WithValue(name, kind string) Opt {
 		if err != nil {
 			return err
 		}
-		w.values = append(w.values, value{field: field{name: name, encode: toBytes, decode: fromBytes}})
+		w.values = append(w.values, value{field: field{name: name, kind: kind, encode: toBytes, decode: fromBytes}})
 		return nil
 	}
+}
+
+type fixedSchema struct {
+	Store  string             `json:"store"`
+	Keys   []fixedSchemaField `json:"keys"`
+	Values []fixedSchemaField `json:"values"`
+}
+
+type fixedSchemaField struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+func (db *dbWrapper) lockSchema() error {
+	schema := fixedSchema{
+		Store:  db.store,
+		Keys:   make([]fixedSchemaField, len(db.keys)),
+		Values: make([]fixedSchemaField, len(db.values)),
+	}
+
+	for i, k := range db.keys {
+		schema.Keys[i].Name = k.name
+		schema.Keys[i].Kind = k.kind
+	}
+
+	for i, v := range db.values {
+		schema.Values[i].Name = v.name
+		schema.Values[i].Kind = v.kind
+	}
+
+	jsonData, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("failed to marshal schema: %w", err)
+	}
+
+	filePath := schemaFile(db.dir)
+	err = os.WriteFile(filePath, jsonData, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write schema file: %w", err)
+	}
+
+	return nil
 }
 
 type IterWrapper struct {
@@ -156,14 +279,18 @@ func (itW *IterWrapper) Iter(fn func(res map[string]any) error) error {
 // This should be called when the database is no longer needed.
 // Returns an error if cleanup fails.
 func (db *dbWrapper) Destroy() error {
-	if db.loc == "" {
+	if db.dir == "" {
 		return nil
 	}
 
-	if err := os.RemoveAll(db.loc); err != nil {
+	if err := os.RemoveAll(db.dir); err != nil {
 		return fmt.Errorf("fail to destroy db %v", err)
 	}
 	return nil
+}
+
+func (db *dbWrapper) Close() error {
+	return db.db.Close()
 }
 
 // Recv continuously receives records from the provided channel and writes them to the database.

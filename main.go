@@ -14,19 +14,27 @@ import (
 )
 
 func main() {
-	dbW, err := lib.New(storageOpt(), os.Getenv("BADMERGER_TMP"), schemaOpts()...)
+	dbW, err := lib.Open(storageOpts()...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fail to open db %v", err)
 		return
 	}
 
-	defer dbW.Destroy()
+	defer dbW.Close()
 
-	ch := make(chan map[string]any, 100)
-	go readStdin(ch)
-	if err := dbW.Recv(ch); err != nil {
-		fmt.Fprintf(os.Stderr, "fail to Recv: %v\n", err)
+	stdinEmpty, err := isStdinEmpty()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fail to check stdin: %v\n", err)
 		return
+	}
+
+	if !stdinEmpty {
+		ch := make(chan map[string]any, 100)
+		go readStdin(ch)
+		if err := dbW.Recv(ch); err != nil {
+			fmt.Fprintf(os.Stderr, "fail to Recv: %v\n", err)
+			return
+		}
 	}
 
 	itW := dbW.NewIterator()
@@ -57,6 +65,26 @@ func main() {
 	})
 }
 
+func isStdinEmpty() (bool, error) {
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return false, err
+	}
+
+	// Check if stdin is a terminal (interactive) or a pipe/file
+	if (stat.Mode() & os.ModeCharDevice) != 0 {
+		// If stdin is a terminal, it's typically "empty" unless user types something
+		return true, nil
+	}
+
+	// For pipes or redirected files, check if size is 0
+	if stat.Size() == 0 {
+		return true, nil
+	}
+
+	return false, nil
+}
+
 func readStdin(ch chan map[string]any) {
 	defer close(ch)
 
@@ -74,8 +102,9 @@ func readStdin(ch chan map[string]any) {
 	}
 }
 
-func schemaOpts() []lib.Opt {
-	var opts []lib.Opt
+func storageOpts() []lib.Opt {
+	opts := []lib.Opt{lib.WithStorage("badger")}
+
 	for i := 1; i < len(os.Args); i++ {
 		if os.Args[i] == "-k" && i+1 < len(os.Args) {
 			parts := strings.Split(os.Args[i+1], ":")
@@ -89,17 +118,15 @@ func schemaOpts() []lib.Opt {
 				opts = append(opts, lib.WithValue(parts[0], parts[1]))
 			}
 			i++
+		} else if os.Args[i] == "-s" && i+1 < len(os.Args) {
+			opts = append(opts, lib.WithStorage(os.Args[i+1]))
+			i++
+		} else if os.Args[i] == "-d" && i+1 < len(os.Args) {
+			opts = append(opts, lib.WithDir(os.Args[i+1]))
+			i++
 		}
 	}
 	opts = append(opts, lib.WithKey("_i_", "int32"))
 
 	return opts
-}
-
-func storageOpt() string {
-	s := os.Getenv("BADMERGER_STORAGE")
-	if s == "" {
-		s = "badger"
-	}
-	return s
 }
