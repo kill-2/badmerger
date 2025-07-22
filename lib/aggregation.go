@@ -1,6 +1,8 @@
 package lib
 
-import "strings"
+import (
+	"strings"
+)
 
 type aggregator interface {
 	on(collection []map[string]any) any
@@ -16,6 +18,10 @@ func chooseAggregator(op string) aggregator {
 		operator = sum{name: strings.Replace(strings.Replace(op, "sum(", "", -1), ")", "", -1)}
 	} else if strings.HasPrefix(op, "count(") {
 		operator = count{name: strings.Replace(strings.Replace(op, "count(", "", -1), ")", "", -1)}
+	} else if strings.HasPrefix(op, "min(") {
+		operator = min{name: strings.Replace(strings.Replace(op, "min(", "", -1), ")", "", -1)}
+	} else if strings.HasPrefix(op, "max(") {
+		operator = max{name: strings.Replace(strings.Replace(op, "max(", "", -1), ")", "", -1)}
 	}
 	return operator
 }
@@ -42,6 +48,104 @@ func (a firstNotNull) on(collection []map[string]any) any {
 		}
 	}
 	return nil
+}
+
+type min struct {
+	name string
+}
+
+func (a min) on(collection []map[string]any) any {
+	if len(collection) == 0 {
+		return nil
+	}
+	var minVal int64
+	first := true
+	for _, item := range collection {
+		if val, ok := item[a.name]; ok {
+			switch v := val.(type) {
+			case int8:
+				if first || int64(v) < minVal {
+					minVal = int64(v)
+					first = false
+				}
+			case int16:
+				if first || int64(v) < minVal {
+					minVal = int64(v)
+					first = false
+				}
+			case int32:
+				if first || int64(v) < minVal {
+					minVal = int64(v)
+					first = false
+				}
+			case int64:
+				if first || v < minVal {
+					minVal = v
+					first = false
+				}
+			case int:
+				if first || int64(v) < minVal {
+					minVal = int64(v)
+					first = false
+				}
+			default:
+				continue
+			}
+		}
+	}
+	if first {
+		return nil
+	}
+	return minVal
+}
+
+type max struct {
+	name string
+}
+
+func (a max) on(collection []map[string]any) any {
+	if len(collection) == 0 {
+		return nil
+	}
+	var maxVal int64
+	first := true
+	for _, item := range collection {
+		if val, ok := item[a.name]; ok {
+			switch v := val.(type) {
+			case int8:
+				if first || int64(v) > maxVal {
+					maxVal = int64(v)
+					first = false
+				}
+			case int16:
+				if first || int64(v) > maxVal {
+					maxVal = int64(v)
+					first = false
+				}
+			case int32:
+				if first || int64(v) > maxVal {
+					maxVal = int64(v)
+					first = false
+				}
+			case int64:
+				if first || v > maxVal {
+					maxVal = v
+					first = false
+				}
+			case int:
+				if first || int64(v) > maxVal {
+					maxVal = int64(v)
+					first = false
+				}
+			default:
+				continue
+			}
+		}
+	}
+	if first {
+		return nil
+	}
+	return maxVal
 }
 
 type sum struct {
