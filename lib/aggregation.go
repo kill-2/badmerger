@@ -11,17 +11,17 @@ type aggregator interface {
 func chooseAggregator(op string) aggregator {
 	var operator aggregator
 	if strings.HasPrefix(op, "first(") {
-		operator = first{name: strings.Replace(strings.Replace(op, "first(", "", -1), ")", "", -1)}
+		operator = first{name: strings.ReplaceAll(strings.ReplaceAll(op, "first(", ""), ")", "")}
 	} else if strings.HasPrefix(op, "first_not_null(") {
-		operator = firstNotNull{name: strings.Replace(strings.Replace(op, "first_not_null(", "", -1), ")", "", -1)}
+		operator = firstNotNull{name: strings.ReplaceAll(strings.ReplaceAll(op, "first_not_null(", ""), ")", "")}
 	} else if strings.HasPrefix(op, "sum(") {
-		operator = sum{name: strings.Replace(strings.Replace(op, "sum(", "", -1), ")", "", -1)}
+		operator = sum{name: strings.ReplaceAll(strings.ReplaceAll(op, "sum(", ""), ")", "")}
 	} else if strings.HasPrefix(op, "count(") {
-		operator = count{name: strings.Replace(strings.Replace(op, "count(", "", -1), ")", "", -1)}
+		operator = count{name: strings.ReplaceAll(strings.ReplaceAll(op, "count(", ""), ")", "")}
 	} else if strings.HasPrefix(op, "min(") {
-		operator = min{name: strings.Replace(strings.Replace(op, "min(", "", -1), ")", "", -1)}
+		operator = min{name: strings.ReplaceAll(strings.ReplaceAll(op, "min(", ""), ")", "")}
 	} else if strings.HasPrefix(op, "max(") {
-		operator = max{name: strings.Replace(strings.Replace(op, "max(", "", -1), ")", "", -1)}
+		operator = max{name: strings.ReplaceAll(strings.ReplaceAll(op, "max(", ""), ")", "")}
 	}
 	return operator
 }
