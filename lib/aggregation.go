@@ -18,6 +18,8 @@ func chooseAggregator(op string) aggregator {
 		operator = sum{name: strings.ReplaceAll(strings.ReplaceAll(op, "sum(", ""), ")", "")}
 	} else if strings.HasPrefix(op, "count(") {
 		operator = count{name: strings.ReplaceAll(strings.ReplaceAll(op, "count(", ""), ")", "")}
+	} else if strings.HasPrefix(op, "count_distinct(") {
+		operator = countDistinct{name: strings.ReplaceAll(strings.ReplaceAll(op, "count_distinct(", ""), ")", "")}
 	} else if strings.HasPrefix(op, "min(") {
 		operator = min{name: strings.ReplaceAll(strings.ReplaceAll(op, "min(", ""), ")", "")}
 	} else if strings.HasPrefix(op, "max(") {
@@ -187,4 +189,18 @@ func (a count) on(collection []map[string]any) any {
 		}
 	}
 	return total
+}
+
+type countDistinct struct {
+	name string
+}
+
+func (a countDistinct) on(collection []map[string]any) any {
+	seen := make(map[any]struct{})
+	for _, item := range collection {
+		if val, ok := item[a.name]; ok && val != nil {
+			seen[val] = struct{}{}
+		}
+	}
+	return int64(len(seen))
 }
