@@ -16,7 +16,7 @@ type lotusDb struct {
 	*lotusdb.DB
 }
 
-func NewLotus(dir string, opts ...lib.Opt) (lib.Storage, error) {
+func NewLotus(dir string) (lib.Storage, error) {
 
 	lotusOpts := lotusdb.DefaultOptions
 	lotusOpts.DirPath = dir
@@ -33,6 +33,10 @@ func (ld *lotusDb) NewInserter() lib.Inserter {
 		db:    ld,
 		batch: ld.DB.NewBatch(lotusdb.DefaultBatchOptions),
 	}
+}
+
+func (ld *lotusDb) Close() error {
+	return ld.DB.Close()
 }
 
 type lotusDbTxn struct {

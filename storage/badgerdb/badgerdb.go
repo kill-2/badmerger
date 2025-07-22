@@ -16,7 +16,7 @@ type badgerDb struct {
 	*badger.DB
 }
 
-func NewBadger(dir string, opts ...lib.Opt) (lib.Storage, error) {
+func NewBadger(dir string) (lib.Storage, error) {
 	badgerOpts := badger.DefaultOptions(dir).WithLogger(nil)
 	db, err := badger.Open(badgerOpts)
 	if err != nil {
@@ -30,6 +30,10 @@ func (bg *badgerDb) NewInserter() lib.Inserter {
 		db:  bg,
 		txn: bg.DB.NewTransaction(true),
 	}
+}
+
+func (bg *badgerDb) Close() error {
+	return bg.DB.Close()
 }
 
 type badgerDbTxn struct {
