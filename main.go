@@ -20,17 +20,21 @@ func main() {
 		return
 	}
 
-	if os.Getenv("BADMERGER_DEL") != "" {
-		defer dbW.Destroy()
-	}
-
 	defer dbW.Close()
 
-	ch := make(chan map[string]any, 100)
-	go readStdin(ch)
-	if err := dbW.Recv(ch); err != nil {
-		fmt.Fprintf(os.Stderr, "fail to Recv: %v\n", err)
+	stdinEmpty, err := isStdinEmpty()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fail to check stdin: %v\n", err)
 		return
+	}
+
+	if !stdinEmpty {
+		ch := make(chan map[string]any, 100)
+		go readStdin(ch)
+		if err := dbW.Recv(ch); err != nil {
+			fmt.Fprintf(os.Stderr, "fail to Recv: %v\n", err)
+			return
+		}
 	}
 
 	itW := dbW.NewIterator()
@@ -59,6 +63,26 @@ func main() {
 		fmt.Println(string(b))
 		return nil
 	})
+}
+
+func isStdinEmpty() (bool, error) {
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return false, err
+	}
+
+	// Check if stdin is a terminal (interactive) or a pipe/file
+	if (stat.Mode() & os.ModeCharDevice) != 0 {
+		// If stdin is a terminal, it's typically "empty" unless user types something
+		return true, nil
+	}
+
+	// For pipes or redirected files, check if size is 0
+	if stat.Size() == 0 {
+		return true, nil
+	}
+
+	return false, nil
 }
 
 func readStdin(ch chan map[string]any) {
