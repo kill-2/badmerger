@@ -27,6 +27,10 @@ func chooseAggregator(op string) aggregator {
 		operator = min{name: strings.ReplaceAll(strings.ReplaceAll(op, "min(", ""), ")", "")}
 	} else if strings.HasPrefix(op, "max(") {
 		operator = max{name: strings.ReplaceAll(strings.ReplaceAll(op, "max(", ""), ")", "")}
+	} else if strings.HasPrefix(op, "last(") {
+		operator = last{name: strings.ReplaceAll(strings.ReplaceAll(op, "last(", ""), ")", "")}
+	} else if strings.HasPrefix(op, "last_not_null(") {
+		operator = lastNotNull{name: strings.ReplaceAll(strings.ReplaceAll(op, "last_not_null(", ""), ")", "")}
 	}
 	return operator
 }
@@ -49,6 +53,30 @@ type firstNotNull struct {
 func (a firstNotNull) on(collection []map[string]any) any {
 	for _, v := range collection {
 		if v0, ok := v[a.name]; ok && (v0 != nil) {
+			return v0
+		}
+	}
+	return nil
+}
+
+type last struct {
+	name string
+}
+
+func (a last) on(collection []map[string]any) any {
+	if len(collection) == 0 {
+		return nil
+	}
+	return collection[len(collection)-1][a.name]
+}
+
+type lastNotNull struct {
+	name string
+}
+
+func (a lastNotNull) on(collection []map[string]any) any {
+	for i := len(collection) - 1; i >= 0; i-- {
+		if v0, ok := collection[i][a.name]; ok && (v0 != nil) {
 			return v0
 		}
 	}
