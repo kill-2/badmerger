@@ -37,24 +37,7 @@ func main() {
 		}
 	}
 
-	itW := dbW.NewIterator()
-	for i := 1; i < len(os.Args); i++ {
-		if os.Args[i] == "-k" && i+1 < len(os.Args) {
-			parts := strings.Split(os.Args[i+1], ":")
-			if len(parts) == 2 {
-				itW = itW.WithPartialKey(parts[0])
-			}
-			i++
-		} else if os.Args[i] == "-a" && i+1 < len(os.Args) {
-			parts := strings.Split(os.Args[i+1], ":")
-			operation := strings.Replace(strings.Replace(parts[1], "}", ")", -1), "{", "(", -1)
-			if len(parts) == 2 {
-				itW = itW.WithAgg(parts[0], operation)
-			}
-			i++
-		}
-	}
-
+	itW := dbW.NewIterator(iteratorOpts()...)
 	itW.Iter(func(res map[string]any) error {
 		b, err := json.Marshal(res)
 		if err != nil {
@@ -102,8 +85,8 @@ func readStdin(ch chan map[string]any) {
 	}
 }
 
-func storageOpts() []lib.Opt {
-	opts := []lib.Opt{lib.WithStorage("badger")}
+func storageOpts() []lib.StorageOpt {
+	opts := []lib.StorageOpt{lib.WithStorage("badgerdb")}
 
 	for i := 1; i < len(os.Args); i++ {
 		if os.Args[i] == "-k" && i+1 < len(os.Args) {
@@ -127,6 +110,29 @@ func storageOpts() []lib.Opt {
 		}
 	}
 	opts = append(opts, lib.WithKey("_i_", "int32"))
+
+	return opts
+}
+
+func iteratorOpts() []lib.IteratorOpt {
+	var opts []lib.IteratorOpt
+
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] == "-k" && i+1 < len(os.Args) {
+			parts := strings.Split(os.Args[i+1], ":")
+			if len(parts) == 2 {
+				opts = append(opts, lib.WithPartialKey(parts[0]))
+			}
+			i++
+		} else if os.Args[i] == "-a" && i+1 < len(os.Args) {
+			parts := strings.Split(os.Args[i+1], ":")
+			operation := strings.Replace(strings.Replace(parts[1], "}", ")", -1), "{", "(", -1)
+			if len(parts) == 2 {
+				opts = append(opts, lib.WithAgg(parts[0], operation))
+			}
+			i++
+		}
+	}
 
 	return opts
 }

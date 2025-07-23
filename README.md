@@ -1,7 +1,6 @@
 # badmerger
 
-## todo
+## Todo
 
 - vachar(uin16)
 - char
-- channel

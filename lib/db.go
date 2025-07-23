@@ -18,7 +18,7 @@ type dbWrapper struct {
 	masks  int
 }
 
-type Opt func(w *dbWrapper) error
+type StorageOpt func(w *dbWrapper) error
 
 type key struct {
 	field
@@ -50,7 +50,7 @@ func schemaFile(dir string) string {
 	return filepath.Join(dir, "schema.json")
 }
 
-func recoverSchema(dir string) ([]Opt, error) {
+func recoverSchema(dir string) ([]StorageOpt, error) {
 	data, err := os.ReadFile(schemaFile(dir))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read schema file: %w", err)
@@ -61,7 +61,7 @@ func recoverSchema(dir string) ([]Opt, error) {
 		return nil, fmt.Errorf("failed to unmarshal schema: %w", err)
 	}
 
-	opts := []Opt{WithStorage(schema.Store), WithDir(dir)}
+	opts := []StorageOpt{WithStorage(schema.Store), WithDir(dir)}
 	for _, key := range schema.Keys {
 		opts = append(opts, WithKey(key.Name, key.Kind))
 	}
@@ -76,7 +76,7 @@ func recoverSchema(dir string) ([]Opt, error) {
 // It handles both new database creation and schema recovery from existing databases.
 // When dir option is provided and contains a schema.json file, it will recover
 // the schema configuration automatically.
-func Open(opts ...Opt) (*dbWrapper, error) {
+func Open(opts ...StorageOpt) (*dbWrapper, error) {
 	w := &dbWrapper{}
 	for _, opt := range opts {
 		if err := opt(w); err != nil {
@@ -97,7 +97,7 @@ func Open(opts ...Opt) (*dbWrapper, error) {
 	return open(opts...)
 }
 
-func open(opts ...Opt) (*dbWrapper, error) {
+func open(opts ...StorageOpt) (*dbWrapper, error) {
 	w := &dbWrapper{}
 	for _, opt := range opts {
 		if err := opt(w); err != nil {
@@ -137,7 +137,7 @@ func open(opts ...Opt) (*dbWrapper, error) {
 // WithStorage returns a configuration function that sets the storage name in dbWrapper.
 // The storage name must match a registered storage implementation in the Registration map.
 // This is typically used when creating a new database instance via New().
-func WithStorage(name string) Opt {
+func WithStorage(name string) StorageOpt {
 	return func(w *dbWrapper) error {
 		w.store = name
 		return nil
@@ -146,7 +146,7 @@ func WithStorage(name string) Opt {
 
 // WithDir returns a configuration function that sets the location in dbWrapper.
 // This is typically used when creating a new database instance via New().
-func WithDir(dir string) Opt {
+func WithDir(dir string) StorageOpt {
 	return func(w *dbWrapper) error {
 		w.dir = dir
 		return nil
@@ -156,7 +156,7 @@ func WithDir(dir string) Opt {
 // WithKey returns a configuration function that adds a key field to the dbWrapper.
 // The key consists of a name and type (e.g., "id", "int32").
 // This is used to define the structure of keys in the database.
-func WithKey(name, kind string) Opt {
+func WithKey(name, kind string) StorageOpt {
 	return func(w *dbWrapper) error {
 		if w.keys == nil {
 			w.keys = make([]key, 0)
@@ -173,7 +173,7 @@ func WithKey(name, kind string) Opt {
 // WithValue returns a configuration function that adds a value field to the dbWrapper.
 // The value consists of a name and type (e.g., "name", "string").
 // This is used to define the structure of values in the database.
-func WithValue(name, kind string) Opt {
+func WithValue(name, kind string) StorageOpt {
 	return func(w *dbWrapper) error {
 		if w.values == nil {
 			w.values = make([]value, 0)
@@ -235,36 +235,43 @@ type IterWrapper struct {
 }
 
 // NewIterator initializes a new iterWrapper
-func (db *dbWrapper) NewIterator() *IterWrapper {
-	return &IterWrapper{
+func (db *dbWrapper) NewIterator(itOpts ...IteratorOpt) *IterWrapper {
+	itW := &IterWrapper{
 		dbWrapper: db,
 		Merger: &Merger{
 			masks:     db.masks,
 			allValues: db.values,
 		},
 	}
+	for _, opt := range itOpts {
+		opt(itW)
+	}
+	return itW
 }
 
-// WithPartialKey adds a key field to the partial keys list for iteration.
-// name: The name of the key field to include in partial key extraction
-// Returns the iterWrapper for method chaining, or nil if the key name is not found
-func (itW *IterWrapper) WithPartialKey(name string) *IterWrapper {
-	for _, k := range itW.keys {
-		if k.name == name {
-			itW.partialKeys = append(itW.partialKeys, k)
-			return itW
+type IteratorOpt func(it *IterWrapper)
+
+// WithPartialKey creates an iterator option that filters keys by name,
+// only including keys matching the given name in the iteration.
+// This is useful for partial key matching during iteration.
+func WithPartialKey(name string) IteratorOpt {
+	return func(itW *IterWrapper) {
+		for _, k := range itW.keys {
+			if k.name == name {
+				itW.partialKeys = append(itW.partialKeys, k)
+			}
 		}
 	}
-	return nil
 }
 
-// WithAgg adds an aggregation operation to the iterator.
-// name: The field name after aggregation
-// op: The aggregation operation to perform
-// Returns the iterWrapper for method chaining
-func (itW *IterWrapper) WithAgg(name, op string) *IterWrapper {
-	itW.aggs = append(itW.aggs, namedAggregation{name: name, aggregator: chooseAggregator(op)})
-	return itW
+// WithAgg creates an iterator option that adds an aggregation operation
+// to be performed during iteration. The aggregation is specified by:
+// - name: the field name to aggregate
+// - op: the aggregation operation (e.g., "sum", "avg", "count")
+func WithAgg(name, op string) IteratorOpt {
+	return func(itW *IterWrapper) {
+		itW.aggs = append(itW.aggs, namedAggregation{name: name, aggregator: chooseAggregator(op)})
+	}
 }
 
 // Iter executes the iteration over the BadgerDB keyspace, applying any configured

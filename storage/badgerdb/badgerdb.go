@@ -9,7 +9,7 @@ import (
 )
 
 func init() {
-	lib.Registration["badger"] = NewBadger
+	lib.Registration["badgerdb"] = NewBadger
 }
 
 type badgerDb struct {
