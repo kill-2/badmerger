@@ -9,7 +9,7 @@ import (
 
 var Registration = make(map[string]func(string) (Storage, error))
 
-type dbWrapper struct {
+type DbWrapper struct {
 	store  string
 	dir    string
 	db     Storage
@@ -18,7 +18,7 @@ type dbWrapper struct {
 	masks  int
 }
 
-type StorageOpt func(w *dbWrapper) error
+type StorageOpt func(w *DbWrapper) error
 
 type key struct {
 	field
@@ -76,8 +76,8 @@ func recoverSchema(dir string) ([]StorageOpt, error) {
 // It handles both new database creation and schema recovery from existing databases.
 // When dir option is provided and contains a schema.json file, it will recover
 // the schema configuration automatically.
-func Open(opts ...StorageOpt) (*dbWrapper, error) {
-	w := &dbWrapper{}
+func Open(opts ...StorageOpt) (*DbWrapper, error) {
+	w := &DbWrapper{}
 	for _, opt := range opts {
 		if err := opt(w); err != nil {
 			return nil, fmt.Errorf("fail to handle option: %v", err)
@@ -97,8 +97,8 @@ func Open(opts ...StorageOpt) (*dbWrapper, error) {
 	return open(opts...)
 }
 
-func open(opts ...StorageOpt) (*dbWrapper, error) {
-	w := &dbWrapper{}
+func open(opts ...StorageOpt) (*DbWrapper, error) {
+	w := &DbWrapper{}
 	for _, opt := range opts {
 		if err := opt(w); err != nil {
 			return nil, fmt.Errorf("fail to handle option: %v", err)
@@ -138,7 +138,7 @@ func open(opts ...StorageOpt) (*dbWrapper, error) {
 // The storage name must match a registered storage implementation in the Registration map.
 // This is typically used when creating a new database instance via New().
 func WithStorage(name string) StorageOpt {
-	return func(w *dbWrapper) error {
+	return func(w *DbWrapper) error {
 		w.store = name
 		return nil
 	}
@@ -147,7 +147,7 @@ func WithStorage(name string) StorageOpt {
 // WithDir returns a configuration function that sets the location in dbWrapper.
 // This is typically used when creating a new database instance via New().
 func WithDir(dir string) StorageOpt {
-	return func(w *dbWrapper) error {
+	return func(w *DbWrapper) error {
 		w.dir = dir
 		return nil
 	}
@@ -157,7 +157,7 @@ func WithDir(dir string) StorageOpt {
 // The key consists of a name and type (e.g., "id", "int32").
 // This is used to define the structure of keys in the database.
 func WithKey(name, kind string) StorageOpt {
-	return func(w *dbWrapper) error {
+	return func(w *DbWrapper) error {
 		if w.keys == nil {
 			w.keys = make([]key, 0)
 		}
@@ -174,7 +174,7 @@ func WithKey(name, kind string) StorageOpt {
 // The value consists of a name and type (e.g., "name", "string").
 // This is used to define the structure of values in the database.
 func WithValue(name, kind string) StorageOpt {
-	return func(w *dbWrapper) error {
+	return func(w *DbWrapper) error {
 		if w.values == nil {
 			w.values = make([]value, 0)
 		}
@@ -198,7 +198,7 @@ type fixedSchemaField struct {
 	Kind string `json:"kind"`
 }
 
-func (db *dbWrapper) lockSchema() error {
+func (db *DbWrapper) lockSchema() error {
 	schema := fixedSchema{
 		Store:  db.store,
 		Keys:   make([]fixedSchemaField, len(db.keys)),
@@ -230,14 +230,14 @@ func (db *dbWrapper) lockSchema() error {
 }
 
 type IterWrapper struct {
-	*dbWrapper
+	*DbWrapper
 	*Merger
 }
 
 // NewIterator initializes a new iterWrapper
-func (db *dbWrapper) NewIterator(itOpts ...IteratorOpt) *IterWrapper {
+func (db *DbWrapper) NewIterator(itOpts ...IteratorOpt) *IterWrapper {
 	itW := &IterWrapper{
-		dbWrapper: db,
+		DbWrapper: db,
 		Merger: &Merger{
 			masks:     db.masks,
 			allValues: db.values,
@@ -285,7 +285,7 @@ func (itW *IterWrapper) Iter(fn func(res map[string]any) error) error {
 // Destroy cleans up the database by removing all temporary files.
 // This should be called when the database is no longer needed.
 // Returns an error if cleanup fails.
-func (db *dbWrapper) Destroy() error {
+func (db *DbWrapper) Destroy() error {
 	if db.dir == "" {
 		return nil
 	}
@@ -296,7 +296,7 @@ func (db *dbWrapper) Destroy() error {
 	return nil
 }
 
-func (db *dbWrapper) Close() error {
+func (db *DbWrapper) Close() error {
 	return db.db.Close()
 }
 
@@ -304,7 +304,7 @@ func (db *dbWrapper) Close() error {
 // It creates a new write transaction and processes records until the channel is closed.
 // Each record is added to the transaction using TxnWrapper.Add().
 // The transaction is automatically committed when the channel closes (via defer).
-func (db *dbWrapper) Recv(ch chan map[string]any) error {
+func (db *DbWrapper) Recv(ch chan map[string]any) error {
 	ins := db.db.NewInserter()
 	defer ins.Commit()
 
@@ -317,7 +317,7 @@ func (db *dbWrapper) Recv(ch chan map[string]any) error {
 	return nil
 }
 
-func (dbW *dbWrapper) extractKeysAndValues(record map[string]any) ([]byte, []byte) {
+func (dbW *DbWrapper) extractKeysAndValues(record map[string]any) ([]byte, []byte) {
 	keyPayload := make([]byte, 0)
 	for _, f := range dbW.keys {
 		fieldValue := record[f.name]
