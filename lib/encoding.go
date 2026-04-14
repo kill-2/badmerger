@@ -45,6 +45,9 @@ func toInt8Binary(anyNum any) []byte {
 		num = uint8(v)
 	case int8:
 		num = uint8(v)
+	case json.Number:
+		f, _ := v.Float64()
+		num = uint8(f)
 	default:
 		num = uint8(0)
 	}
@@ -74,6 +77,9 @@ func toInt16Binary(anyNum any) []byte {
 		num = uint16(v)
 	case int8:
 		num = uint16(v)
+	case json.Number:
+		f, _ := v.Float64()
+		num = uint16(f)
 	default:
 		num = uint16(0)
 	}
@@ -103,6 +109,9 @@ func toInt32Binary(anyNum any) []byte {
 		num = uint32(v)
 	case int8:
 		num = uint32(v)
+	case json.Number:
+		f, _ := v.Float64()
+		num = uint32(f)
 	default:
 		num = uint32(0)
 	}
@@ -132,6 +141,9 @@ func toInt64Binary(anyNum any) []byte {
 		num = uint64(v)
 	case int8:
 		num = uint64(v)
+	case json.Number:
+		f, _ := v.Float64()
+		num = uint64(f)
 	default:
 		num = uint64(0)
 	}
